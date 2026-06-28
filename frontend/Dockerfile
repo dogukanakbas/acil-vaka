@@ -9,6 +9,7 @@ RUN npm ci
 # Copy source code and build
 COPY . .
 # We need to build the app
+ENV BACKEND_URL=http://backend:8000
 RUN npm run build
 
 # Production image
