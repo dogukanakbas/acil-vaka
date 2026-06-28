@@ -224,6 +224,41 @@ def chat_endpoint(req: QueryRequest, db: Session = Depends(get_db), current_user
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/chat/sessions")
+def get_sessions(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    sessions = db.query(ChatSession).filter(ChatSession.user_id == current_user.id).order_by(ChatSession.created_at.desc()).all()
+    result = []
+    for s in sessions:
+        first_msg = db.query(Message).filter(Message.session_id == s.id, Message.role == "user").order_by(Message.created_at.asc()).first()
+        title = first_msg.content[:35] + "..." if first_msg and first_msg.content else "Yeni Sohbet"
+        result.append({
+            "id": s.id,
+            "title": title,
+            "created_at": s.created_at
+        })
+    return result
+
+@app.get("/api/chat/sessions/{session_id}")
+def get_session_messages(session_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session or session.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Sohbet bulunamadı.")
+    
+    messages = db.query(Message).filter(Message.session_id == session_id).order_by(Message.created_at.asc()).all()
+    
+    result = []
+    for m in messages:
+        fb = None
+        if m.feedback:
+            fb = "positive" if m.feedback.is_positive else "negative"
+        result.append({
+            "id": m.id,
+            "role": m.role,
+            "content": m.content,
+            "feedback": fb
+        })
+    return result
+
 @app.post("/api/feedback")
 def submit_feedback(req: FeedbackRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     msg = db.query(Message).filter(Message.id == req.message_id).first()

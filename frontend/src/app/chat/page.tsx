@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, Bot, User, Stethoscope, ThumbsUp, ThumbsDown, HelpCircle, AlertTriangle, LogOut } from 'lucide-react';
+import { Send, Bot, User, Stethoscope, ThumbsUp, ThumbsDown, HelpCircle, AlertTriangle, LogOut, MessageSquare, Plus, Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -17,17 +17,25 @@ type Message = {
   feedback?: 'positive' | 'negative' | null;
 };
 
+type Session = {
+  id: string;
+  title: string;
+  created_at: string;
+};
+
+const WELCOME_MESSAGE: Message = {
+  id: 'welcome',
+  role: 'assistant',
+  content: 'Merhaba doktor bey/hanım. Ben Acil Vaka Asistanı. Bugünkü nöbetinizde size nasıl yardımcı olabilirim? Vakalarla ilgili danışmak istediğiniz belirtileri veya tahlil sonuçlarını yazabilirsiniz.',
+};
+
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content: 'Merhaba doktor bey/hanım. Ben Acil Vaka Asistanı. Bugünkü nöbetinizde size nasıl yardımcı olabilirim? Vakalarla ilgili danışmak istediğiniz belirtileri veya tahlil sonuçlarını yazabilirsiniz.',
-    },
-  ]);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
   const [reviewMessageId, setReviewMessageId] = useState<string | null>(null);
   const [expertNote, setExpertNote] = useState('');
@@ -35,12 +43,73 @@ export default function Home() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
+  const fetchSessions = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      const res = await fetch('/api/chat/sessions', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSessions(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch sessions', e);
+    }
+  };
+
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) {
       router.push('/login');
+    } else {
+      fetchSessions();
     }
   }, [router]);
+
+  const loadSession = async (id: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/chat/sessions/${id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data);
+        setSessionId(id);
+        if (window.innerWidth < 768) setIsSidebarOpen(false);
+      }
+    } catch (e) {
+      toast.error('Sohbet yüklenemedi.');
+    }
+  };
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionParam = urlParams.get('session');
+    if (sessionParam) {
+      loadSession(sessionParam);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (sessionId) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('session', sessionId);
+      window.history.replaceState({}, '', url.toString());
+    } else {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('session');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, [sessionId]);
+
+  const handleNewChat = () => {
+    setSessionId(null);
+    setMessages([WELCOME_MESSAGE]);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -86,6 +155,7 @@ export default function Home() {
 
       if (!sessionId && data.session_id) {
         setSessionId(data.session_id);
+        fetchSessions();
       }
 
       setMessages((prev) => [
@@ -155,34 +225,87 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-50 items-center justify-center p-4 md:p-8 font-sans">
+    <div className="flex h-screen bg-zinc-950 text-zinc-50 font-sans overflow-hidden">
       <Toaster theme="dark" position="top-center" />
-      <Card className="w-full max-w-4xl h-full flex flex-col bg-zinc-900 border-zinc-800 shadow-2xl relative overflow-hidden">
-        <CardHeader className="border-b border-zinc-800 bg-zinc-950/50 flex flex-row items-center gap-4 py-4 z-10">
-          <div className="bg-emerald-500/20 p-3 rounded-full text-emerald-400">
-            <Stethoscope size={28} />
-          </div>
-          <div className="flex-1">
-            <CardTitle className="text-xl md:text-2xl text-zinc-100">Acil Vaka Asistanı</CardTitle>
-            <CardDescription className="text-zinc-400">
-              Yapay Zeka Destekli Klinik Karar Sistemi
-            </CardDescription>
-          </div>
+      
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 md:hidden" 
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <div className={`
+        fixed md:static inset-y-0 left-0 z-50
+        w-72 bg-zinc-900 border-r border-zinc-800 flex flex-col transition-transform duration-300
+        ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+        <div className="p-4 flex items-center justify-between border-b border-zinc-800">
+          <Button 
+            onClick={handleNewChat}
+            className="flex-1 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 shadow-none justify-start gap-2"
+          >
+            <Plus size={18} />
+            Yeni Sohbet
+          </Button>
+          <Button variant="ghost" size="icon" className="md:hidden ml-2 text-zinc-400 hover:text-white" onClick={() => setIsSidebarOpen(false)}>
+            <X size={20} />
+          </Button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-3 space-y-1">
+          <div className="text-xs font-semibold text-zinc-500 mb-2 px-2 uppercase tracking-wider">Geçmiş Sohbetler</div>
+          {sessions.map(session => (
+            <button
+              key={session.id}
+              onClick={() => loadSession(session.id)}
+              className={`w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-3 transition-colors text-sm
+                ${sessionId === session.id ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}
+              `}
+            >
+              <MessageSquare size={16} className={sessionId === session.id ? 'text-emerald-500' : ''} />
+              <span className="truncate flex-1">{session.title}</span>
+            </button>
+          ))}
+          {sessions.length === 0 && (
+            <div className="text-zinc-500 text-sm px-2 italic">Geçmiş sohbet bulunamadı.</div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-zinc-800">
           <Button 
             variant="ghost" 
-            size="icon" 
-            className="text-zinc-400 hover:text-red-400 hover:bg-zinc-800"
+            className="w-full justify-start text-zinc-400 hover:text-red-400 hover:bg-red-500/10 gap-2"
             onClick={() => {
               localStorage.removeItem('token');
               localStorage.removeItem('role');
               router.push('/login');
             }}
           >
-            <LogOut size={20} />
+            <LogOut size={18} />
+            Çıkış Yap
           </Button>
-        </CardHeader>
-        <CardContent className="flex-1 flex flex-col p-0 overflow-hidden relative z-0">
-          <div ref={scrollRef} className="flex-1 p-4 md:p-6 w-full overflow-y-auto">
+        </div>
+      </div>
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col bg-zinc-950 min-w-0 relative h-full">
+        <header className="h-16 flex items-center gap-4 px-4 border-b border-zinc-800 bg-zinc-900/50">
+          <Button variant="ghost" size="icon" className="md:hidden text-zinc-400 hover:text-white" onClick={() => setIsSidebarOpen(true)}>
+            <Menu size={24} />
+          </Button>
+          <div className="bg-emerald-500/20 p-2 rounded-full text-emerald-400 hidden md:flex">
+            <Stethoscope size={20} />
+          </div>
+          <div className="flex-1 truncate">
+            <h1 className="text-lg font-semibold text-zinc-100 truncate">Acil Vaka Asistanı</h1>
+          </div>
+        </header>
+
+        <div className="flex-1 flex flex-col p-0 overflow-hidden relative z-0">
+          <div ref={scrollRef} className="flex-1 p-4 md:p-6 w-full max-w-4xl mx-auto overflow-y-auto">
             <div className="flex flex-col gap-6">
               {messages.map((m) => (
                 <div
@@ -194,7 +317,7 @@ export default function Home() {
                   <Avatar className={m.role === 'user' ? 'bg-blue-600' : 'bg-emerald-600 mt-1'}>
                     <AvatarFallback>{m.role === 'user' ? <User size={20} /> : <Bot size={20} />}</AvatarFallback>
                   </Avatar>
-                  <div className={`flex flex-col gap-2 max-w-[85%] md:max-w-[75%] ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+                  <div className={`flex flex-col gap-2 max-w-[90%] md:max-w-[80%] ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
                     <div
                       className={`rounded-2xl px-5 py-3 text-sm md:text-base leading-relaxed shadow-sm whitespace-pre-wrap ${
                         m.role === 'user'
@@ -245,13 +368,13 @@ export default function Home() {
             </div>
           </div>
           
-          <div className="p-4 border-t border-zinc-800 bg-zinc-950/50 z-10">
+          <div className="p-4 bg-zinc-950 z-10 w-full max-w-4xl mx-auto">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 handleSend();
               }}
-              className="flex gap-3 max-w-4xl mx-auto"
+              className="flex gap-3"
             >
               <Input
                 placeholder="Vaka bilgilerini veya semptomları yazın..."
@@ -269,8 +392,8 @@ export default function Home() {
               </Button>
             </form>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       <Dialog open={!!reviewMessageId} onOpenChange={(open) => !open && setReviewMessageId(null)}>
         <DialogContent className="bg-zinc-900 border-zinc-800 text-zinc-50">
