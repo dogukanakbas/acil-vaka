@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, Bot, User, Stethoscope, ThumbsUp, ThumbsDown, HelpCircle, AlertTriangle, LogOut, MessageSquare, Plus, Menu, X, Paperclip, ImageIcon, XCircle } from 'lucide-react';
+import { Send, Bot, User, Stethoscope, ThumbsUp, ThumbsDown, HelpCircle, AlertTriangle, LogOut, MessageSquare, Plus, Menu, X, Paperclip, ImageIcon, XCircle, Database } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -327,8 +327,8 @@ export default function Home() {
           )}
         </div>
 
-        <div className="p-4 border-t border-zinc-800 space-y-4">
-          <div className="space-y-2">
+        <div className="p-4 border-t border-zinc-800 space-y-2">
+          <div className="space-y-2 mb-4">
             <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-1">Görüntü İşleme Yapay Zekası</label>
             <Select value={visionModel} onValueChange={(val) => val && setVisionModel(val)}>
               <SelectTrigger className="w-full bg-zinc-950 border-zinc-800 text-zinc-300">
@@ -340,7 +340,18 @@ export default function Home() {
               </SelectContent>
             </Select>
           </div>
-          
+
+          {typeof window !== 'undefined' && localStorage.getItem('role') === 'admin' && (
+            <Button 
+              variant="outline" 
+              className="w-full justify-start gap-3 bg-zinc-900 border-zinc-800 hover:bg-zinc-800 text-zinc-300"
+              onClick={() => router.push('/admin/knowledge')}
+            >
+              <Database size={18} className="text-blue-500" />
+              Bilgi Bankası
+            </Button>
+          )}
+
           <Button 
             variant="ghost" 
             className="w-full justify-start text-zinc-400 hover:text-red-400 hover:bg-red-500/10 gap-2"

@@ -11,6 +11,7 @@ services:
     volumes:
       - ./backend/acilvaka.db:/app/acilvaka.db
       - ./backend/chroma_db:/app/chroma_db
+      - ./backend/data:/app/data
     ports:
       - "8000:8000"
 

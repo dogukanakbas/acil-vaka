@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
@@ -317,6 +317,87 @@ def chat_endpoint(req: QueryRequest, db: Session = Depends(get_db), current_user
         elif "404" in error_msg or "not found" in error_msg.lower():
             raise HTTPException(status_code=400, detail="Seçilen yapay zeka modeli bulunamadı veya bu API anahtarı için aktif değil.")
         raise HTTPException(status_code=500, detail=f"Yapay Zeka Hatası: {error_msg}")
+
+# --- KNOWLEDGE BASE (ADMIN) ENDPOINTS ---
+
+DATA_DIR = "./data"
+
+@app.post("/api/knowledge/upload")
+async def upload_knowledge(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Yetkisiz işlem. Sadece yöneticiler bilgi bankasına veri ekleyebilir.")
+        
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+        
+    file_path = os.path.join(DATA_DIR, file.filename)
+    with open(file_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+        
+    # Process PDF and add to vector db
+    if file.filename.endswith(".pdf"):
+        try:
+            from langchain_community.document_loaders import PyPDFLoader
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+            
+            loader = PyPDFLoader(file_path)
+            documents = loader.load()
+            
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200, length_function=len)
+            chunks = text_splitter.split_documents(documents)
+            
+            global db_vector
+            if db_vector is None:
+                if os.path.exists(CHROMA_PATH):
+                    db_vector = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+                else:
+                    db_vector = Chroma.from_documents(chunks, embeddings, persist_directory=CHROMA_PATH)
+                    db_vector.persist()
+                    init_qa_chain()
+                    return {"message": f"{file.filename} başarıyla yüklendi ve veritabanı oluşturuldu."}
+            
+            db_vector.add_documents(chunks)
+            db_vector.persist()
+            
+            # Re-init QA chain to ensure it uses the latest retriever
+            init_qa_chain()
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"PDF işlenirken hata oluştu: {str(e)}")
+            
+    return {"message": f"{file.filename} başarıyla yüklendi ve yapay zeka hafızasına eklendi."}
+
+@app.get("/api/knowledge/files")
+def list_knowledge_files(current_user: User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Yetkisiz işlem.")
+        
+    if not os.path.exists(DATA_DIR):
+        return []
+        
+    files = []
+    for f in os.listdir(DATA_DIR):
+        if f.endswith(".pdf") or f.endswith(".txt"):
+            path = os.path.join(DATA_DIR, f)
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+            files.append({
+                "filename": f,
+                "size": f"{size_mb:.2f} MB"
+            })
+    return files
+
+@app.delete("/api/knowledge/files/{filename}")
+def delete_knowledge_file(filename: str, current_user: User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Yetkisiz işlem.")
+        
+    file_path = os.path.join(DATA_DIR, filename)
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        return {"message": "Dosya başarıyla silindi."}
+    else:
+        raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
 
 @app.get("/api/chat/sessions")
 def get_sessions(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
