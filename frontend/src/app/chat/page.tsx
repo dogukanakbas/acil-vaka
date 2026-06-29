@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, Bot, User, Stethoscope, ThumbsUp, ThumbsDown, HelpCircle, AlertTriangle, LogOut, MessageSquare, Plus, Menu, X, Paperclip, ImageIcon, XCircle, Database, Clock } from 'lucide-react';
+import { Send, Bot, User, Stethoscope, ThumbsUp, ThumbsDown, HelpCircle, AlertTriangle, LogOut, MessageSquare, Plus, Menu, X, Paperclip, ImageIcon, XCircle, Database, Clock, Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -15,6 +15,7 @@ type ExpertReview = {
   id: number;
   doctor_note: string;
   expert_response: string | null;
+  urgency?: string | null;
   is_resolved: boolean;
   created_at: string;
 };
@@ -32,6 +33,7 @@ type Session = {
   id: string;
   title: string;
   created_at: string;
+  has_resolved_review?: boolean;
 };
 
 const WELCOME_MESSAGE: Message = {
@@ -50,6 +52,8 @@ export default function Home() {
   
   const [reviewMessageId, setReviewMessageId] = useState<string | null>(null);
   const [expertNote, setExpertNote] = useState('');
+  const [expertUrgency, setExpertUrgency] = useState<'red' | 'yellow' | 'green'>('green');
+  const [printData, setPrintData] = useState<Message | null>(null);
   
   const [visionModel, setVisionModel] = useState('gpt-4o');
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
@@ -272,7 +276,11 @@ export default function Home() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ message_id: reviewMessageId, doctor_note: expertNote }),
+        body: JSON.stringify({ 
+          message_id: reviewMessageId, 
+          doctor_note: expertNote,
+          urgency: expertUrgency
+        }),
       });
       if (res.ok) {
         toast.success('Talep Gönderildi', { description: 'Vakanız ilgili uzman hekim paneline düşmüştür.' });
@@ -284,6 +292,7 @@ export default function Home() {
             id: 0,
             doctor_note: expertNote,
             expert_response: null,
+            urgency: expertUrgency,
             is_resolved: false,
             created_at: new Date().toISOString()
           }
@@ -291,6 +300,7 @@ export default function Home() {
 
         setReviewMessageId(null);
         setExpertNote('');
+        setExpertUrgency('green');
       } else {
         toast.error('Talep gönderilemedi.');
       }
@@ -342,6 +352,12 @@ export default function Home() {
             >
               <MessageSquare size={16} className={sessionId === session.id ? 'text-emerald-500' : ''} />
               <span className="truncate flex-1">{session.title}</span>
+              {session.has_resolved_review && (
+                <span className="flex h-2 w-2 relative shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+              )}
             </button>
           ))}
           {sessions.length === 0 && (
@@ -464,9 +480,18 @@ export default function Home() {
                               <Stethoscope size={16} />
                               <span>Uzman Hekim Değerlendirmesi</span>
                             </div>
-                            <span className="text-[10px] text-zinc-500">
-                              {new Date(m.expert_review.created_at).toLocaleDateString('tr-TR')}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] px-2.5 py-0.5 rounded-full border font-medium ${
+                                m.expert_review.urgency === 'red' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
+                                m.expert_review.urgency === 'yellow' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' :
+                                'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                              }`}>
+                                {m.expert_review.urgency === 'red' ? 'Kırmızı Kod' : m.expert_review.urgency === 'yellow' ? 'Sarı Kod' : 'Yeşil Kod'}
+                              </span>
+                              <span className="text-[10px] text-zinc-500">
+                                {new Date(m.expert_review.created_at).toLocaleDateString('tr-TR')}
+                              </span>
+                            </div>
                           </div>
                           <div className="space-y-2">
                             <p className="text-xs text-zinc-400 italic">
@@ -476,13 +501,52 @@ export default function Home() {
                             <div className="bg-zinc-900/80 border border-zinc-800 rounded-lg p-3 text-sm text-zinc-200 whitespace-pre-wrap">
                               {m.expert_review.expert_response}
                             </div>
+                            <div className="flex justify-end pt-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-emerald-500/20 hover:border-emerald-500/40 text-emerald-400 bg-transparent hover:bg-emerald-500/10 text-xs gap-1.5 h-8 rounded-lg"
+                                onClick={() => {
+                                  setPrintData(m);
+                                  setTimeout(() => {
+                                    window.print();
+                                  }, 150);
+                                }}
+                              >
+                                <Printer size={14} />
+                                Konsültasyon Raporu (Yazdır)
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       ) : (
-                        <div className="w-full mt-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 space-y-2">
-                          <div className="flex items-center gap-2 text-amber-500 text-sm font-semibold">
-                            <Clock size={16} className="animate-pulse" />
-                            <span>Uzman İncelemesi Bekleniyor</span>
+                        <div className={`w-full mt-2 rounded-xl border p-4 space-y-2 ${
+                          m.expert_review.urgency === 'red' ? 'border-red-500/30 bg-red-500/5' :
+                          m.expert_review.urgency === 'yellow' ? 'border-amber-500/30 bg-amber-500/5' :
+                          'border-zinc-800 bg-zinc-900/30'
+                        }`}>
+                          <div className="flex items-center gap-2 text-sm font-semibold">
+                            <span className="relative flex h-2 w-2">
+                              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                                m.expert_review.urgency === 'red' ? 'bg-red-400' :
+                                m.expert_review.urgency === 'yellow' ? 'bg-amber-400' :
+                                'bg-emerald-400'
+                              }`}></span>
+                              <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                                m.expert_review.urgency === 'red' ? 'bg-red-500' :
+                                m.expert_review.urgency === 'yellow' ? 'bg-amber-500' :
+                                'bg-emerald-500'
+                              }`}></span>
+                            </span>
+                            <span className={
+                              m.expert_review.urgency === 'red' ? 'text-red-400 font-bold' :
+                              m.expert_review.urgency === 'yellow' ? 'text-amber-400' :
+                              'text-emerald-400'
+                            }>
+                              {m.expert_review.urgency === 'red' ? 'Kırmızı Kod: Kritik Acil İnceleme Bekleniyor' :
+                               m.expert_review.urgency === 'yellow' ? 'Sarı Kod: Acil İnceleme Bekleniyor' :
+                               'Yeşil Kod: İnceleme Bekleniyor'}
+                            </span>
                           </div>
                           <p className="text-xs text-zinc-400 italic">
                             <span className="font-semibold text-zinc-300 not-italic">İletilen Hekim Notu: </span>
@@ -573,16 +637,33 @@ export default function Home() {
               <AlertTriangle size={20} /> Vakayı Uzmana Yönlendir
             </DialogTitle>
             <DialogDescription className="text-zinc-400">
-              Bu vakanın çözümü için bir uzman hekimin görüşüne ihtiyacınız varsa, lütfen notunuzu aşağıya ekleyerek gönderin.
+              Bu vakanın çözümü için bir uzman hekimin görüşüne ihtiyacınız varsa, lütfen notunuzu ve aciliyet derecesini belirterek gönderin.
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
-            <textarea
-              className="w-full h-32 bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-amber-500/50 resize-none"
-              placeholder="Örnek: Hastanın laboratuvar sonuçlarında x değeri yüksek geldi, yapay zekanın önerisinden emin olamadım..."
-              value={expertNote}
-              onChange={(e) => setExpertNote(e.target.value)}
-            />
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Aciliyet Seviyesi (Triyaj)</label>
+              <Select value={expertUrgency} onValueChange={(val: any) => val && setExpertUrgency(val)}>
+                <SelectTrigger className="w-full bg-zinc-950 border-zinc-800 text-zinc-300">
+                  <SelectValue placeholder="Aciliyet Seçin" />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-900 border-zinc-800 text-zinc-300">
+                  <SelectItem value="green">🟢 Yeşil Kod (Stabil / Düşük Öncelik)</SelectItem>
+                  <SelectItem value="yellow">🟡 Sarı Kod (Orta Acil / Orta Öncelik)</SelectItem>
+                  <SelectItem value="red">🔴 Kırmızı Kod (Kritik Acil / Yüksek Öncelik)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Hekim Notu</label>
+              <textarea
+                className="w-full h-32 bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-amber-500/50 resize-none"
+                placeholder="Örnek: Hastanın laboratuvar sonuçlarında x değeri yüksek geldi, yapay zekanın önerisinden emin olamadım..."
+                value={expertNote}
+                onChange={(e) => setExpertNote(e.target.value)}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" className="hover:bg-zinc-800 text-zinc-300" onClick={() => setReviewMessageId(null)}>İptal</Button>
@@ -590,6 +671,93 @@ export default function Home() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Print Layout */}
+      {printData && printData.expert_review && (
+        <>
+          <style dangerouslySetInnerHTML={{__html: `
+            @media print {
+              body * {
+                visibility: hidden !important;
+              }
+              #print-area, #print-area * {
+                visibility: visible !important;
+              }
+              #print-area {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                display: block !important;
+                background: white !important;
+                color: black !important;
+                font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+              }
+            }
+          `}} />
+          <div id="print-area" className="hidden print:block fixed inset-0 bg-white text-black p-10 z-[9999] min-h-screen">
+            <div className="max-w-3xl mx-auto space-y-6">
+              {/* Government Header */}
+              <div className="text-center border-b-2 border-black pb-4">
+                <h2 className="text-lg font-bold uppercase tracking-wide">T.C. SAĞLIK BAKANLIĞI</h2>
+                <h3 className="text-md font-semibold uppercase tracking-wide">ACİL SERVİS KLİNİK KONSÜLTASYON RAPORU</h3>
+                <p className="text-xs text-gray-500 mt-1">Rapor ID: KNS-{printData.expert_review.id || 'YENİ'} / Tarih: {new Date(printData.expert_review.created_at).toLocaleString('tr-TR')}</p>
+              </div>
+
+              {/* Medical Triage Info */}
+              <div className="grid grid-cols-2 gap-4 border border-black p-4 text-sm bg-gray-50">
+                <div>
+                  <span className="font-bold">Konsültan Hekim Tipi:</span> Uzman Hekim Değerlendirmesi
+                </div>
+                <div>
+                  <span className="font-bold">Vaka Aciliyet Derecesi (Triyaj):</span>{' '}
+                  {printData.expert_review.urgency === 'red' ? 'Kırmızı Kod (Kritik Acil)' : printData.expert_review.urgency === 'yellow' ? 'Sarı Kod (Orta Öncelik)' : 'Yeşil Kod (Stabil)'}
+                </div>
+                <div>
+                  <span className="font-bold">Danışan Hekim:</span> Pratisyen Hekim (Genel Nöbetçi)
+                </div>
+                <div>
+                  <span className="font-bold">Konsültasyon Durumu:</span> Tamamlandı (Resolved)
+                </div>
+              </div>
+
+              {/* General Practitioner Case Note */}
+              <div className="space-y-2">
+                <h4 className="font-bold text-sm border-b border-gray-300 pb-1">1. DANIŞAN HEKİMİN KLİNİK NOTU VE SORUSU</h4>
+                <p className="text-sm italic text-gray-700 whitespace-pre-wrap">"{printData.expert_review.doctor_note}"</p>
+              </div>
+
+              {/* AI Assistant Diagnostics Recommendation */}
+              <div className="space-y-2">
+                <h4 className="font-bold text-sm border-b border-gray-300 pb-1">2. SİSTEM YAPAY ZEKA KONSÜLTASYON TAVSİYESİ</h4>
+                <div className="text-sm text-gray-800 whitespace-pre-wrap bg-gray-50 border border-gray-200 rounded p-3">
+                  {printData.content}
+                </div>
+              </div>
+
+              {/* Expert Clinical Review Response */}
+              <div className="space-y-2">
+                <h4 className="font-bold text-sm border-b border-gray-300 pb-1">3. UZMAN HEKİM NİHAİ DEĞERLENDİRMESİ</h4>
+                <div className="text-sm font-semibold text-gray-900 whitespace-pre-wrap bg-gray-50 border-2 border-gray-300 rounded p-4">
+                  {printData.expert_review.expert_response}
+                </div>
+              </div>
+
+              {/* Signatures */}
+              <div className="pt-12 flex justify-between text-sm">
+                <div className="text-center w-48 border-t border-black pt-2">
+                  <p className="font-bold">Danışan Hekim</p>
+                  <p className="text-xs text-gray-500 mt-1">İmza / Kaşe</p>
+                </div>
+                <div className="text-center w-48 border-t border-black pt-2">
+                  <p className="font-bold">Konsültan Uzman Hekim</p>
+                  <p className="text-xs text-gray-500 mt-1">Dijital İmza / Onaylıdır</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

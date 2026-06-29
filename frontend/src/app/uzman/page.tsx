@@ -15,6 +15,9 @@ type ChatHistory = {
 type ExpertReview = {
   id: number;
   doctor_note: string;
+  expert_response?: string | null;
+  urgency?: string | null;
+  is_resolved?: boolean;
   created_at: string;
   history: ChatHistory[];
 };
@@ -24,6 +27,7 @@ export default function UzmanPaneli() {
   const [loading, setLoading] = useState(true);
   const [responses, setResponses] = useState<Record<number, string>>({});
   const [submitting, setSubmitting] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<'pending' | 'resolved'>('pending');
   const router = useRouter();
 
   useEffect(() => {
@@ -35,14 +39,16 @@ export default function UzmanPaneli() {
     } else if (role !== 'expert') {
       router.push('/chat');
     } else {
-      fetchReviews();
+      fetchReviews(activeTab);
     }
-  }, [router]);
+  }, [router, activeTab]);
 
-  const fetchReviews = async () => {
+  const fetchReviews = async (tab: 'pending' | 'resolved' = activeTab) => {
     try {
+      setLoading(true);
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/expert-reviews', {
+      const isResolved = tab === 'resolved';
+      const res = await fetch(`/api/expert-reviews?resolved=${isResolved}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -127,10 +133,38 @@ export default function UzmanPaneli() {
           </Button>
         </header>
 
+        {/* Tabs Control */}
+        <div className="flex border-b border-zinc-800 gap-6">
+          <button
+            onClick={() => setActiveTab('pending')}
+            className={`pb-3 text-sm font-semibold border-b-2 transition-colors ${
+              activeTab === 'pending'
+                ? 'border-amber-500 text-amber-500'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            Bekleyen Vakalar {activeTab === 'pending' && `(${reviews.length})`}
+          </button>
+          <button
+            onClick={() => setActiveTab('resolved')}
+            className={`pb-3 text-sm font-semibold border-b-2 transition-colors ${
+              activeTab === 'resolved'
+                ? 'border-emerald-500 text-emerald-500'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            Değerlendirilen Vakalar (Arşiv) {activeTab === 'resolved' && `(${reviews.length})`}
+          </button>
+        </div>
+
         {reviews.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-zinc-500 gap-4">
             <CheckCircle size={64} className="text-emerald-500/50" />
-            <p className="text-lg">Bekleyen vaka değerlendirmesi bulunmuyor.</p>
+            <p className="text-lg">
+              {activeTab === 'pending' 
+                ? 'Bekleyen vaka değerlendirmesi bulunmuyor.' 
+                : 'Henüz vaka değerlendirmesi yapılmamış.'}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-8">
@@ -145,8 +179,21 @@ export default function UzmanPaneli() {
                       <Clock size={14} /> {new Date(review.created_at).toLocaleString('tr-TR')}
                     </CardDescription>
                   </div>
-                  <div className="bg-amber-500/10 text-amber-500 px-3 py-1 rounded-full text-sm font-medium border border-amber-500/20">
-                    İnceleme Bekliyor
+                  <div className="flex gap-2">
+                    <div className={`px-3 py-1 rounded-full text-xs font-semibold border ${
+                      review.urgency === 'red' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                      review.urgency === 'yellow' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' :
+                      'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    }`}>
+                      {review.urgency === 'red' ? '🔴 Kırmızı Kod' :
+                       review.urgency === 'yellow' ? '🟡 Sarı Kod' :
+                       '🟢 Yeşil Kod'}
+                    </div>
+                    {activeTab === 'resolved' && (
+                      <div className="bg-emerald-500/10 text-emerald-400 px-3 py-1 rounded-full text-xs font-semibold border border-emerald-500/20">
+                        ✓ Değerlendirildi
+                      </div>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -179,19 +226,27 @@ export default function UzmanPaneli() {
 
                       <div className="flex-1 flex flex-col gap-3">
                         <label className="text-sm font-bold text-zinc-400 uppercase tracking-wider">Uzman Değerlendirmesi</label>
-                        <textarea
-                          className="flex-1 min-h-[200px] bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-zinc-100 focus:ring-2 focus:ring-emerald-500/50 focus:outline-none resize-none"
-                          placeholder="Bu vakadaki pratisyen hekime ve yapay zekanın önerisine dair uzman yorumunuzu buraya yazın..."
-                          value={responses[review.id] || ''}
-                          onChange={(e) => handleResponseChange(review.id, e.target.value)}
-                        />
-                        <Button 
-                          onClick={() => submitAnswer(review.id)}
-                          disabled={submitting === review.id}
-                          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white h-12 rounded-xl mt-2"
-                        >
-                          {submitting === review.id ? 'Kaydediliyor...' : 'Değerlendirmeyi Gönder'} <ArrowRight className="ml-2 w-4 h-4" />
-                        </Button>
+                        {activeTab === 'resolved' ? (
+                          <div className="flex-1 min-h-[200px] bg-zinc-950/50 border border-zinc-800 rounded-xl p-4 text-zinc-300 text-sm whitespace-pre-wrap select-text">
+                            {review.expert_response || 'Değerlendirme notu boş bırakılmış.'}
+                          </div>
+                        ) : (
+                          <>
+                            <textarea
+                              className="flex-1 min-h-[200px] bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-zinc-100 focus:ring-2 focus:ring-emerald-500/50 focus:outline-none resize-none"
+                              placeholder="Bu vakadaki pratisyen hekime ve yapay zekanın önerisine dair uzman yorumunuzu buraya yazın..."
+                              value={responses[review.id] || ''}
+                              onChange={(e) => handleResponseChange(review.id, e.target.value)}
+                            />
+                            <Button 
+                              onClick={() => submitAnswer(review.id)}
+                              disabled={submitting === review.id}
+                              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white h-12 rounded-xl mt-2"
+                            >
+                              {submitting === review.id ? 'Kaydediliyor...' : 'Değerlendirmeyi Gönder'} <ArrowRight className="ml-2 w-4 h-4" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>

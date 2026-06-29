@@ -111,13 +111,19 @@ qa_chain = None
 @app.on_event("startup")
 def on_startup():
     init_db()
-    # Auto-migrate schema for image_path
+    # Auto-migrate schema for image_path and urgency
     try:
         from sqlalchemy import text
         from database import SessionLocal
         db = SessionLocal()
         try:
             db.execute(text("ALTER TABLE messages ADD COLUMN image_path VARCHAR;"))
+            db.commit()
+        except Exception:
+            pass
+            
+        try:
+            db.execute(text("ALTER TABLE expert_reviews ADD COLUMN urgency VARCHAR DEFAULT 'green';"))
             db.commit()
         except Exception:
             pass
@@ -208,9 +214,13 @@ class FeedbackRequest(BaseModel):
 class ExpertReviewRequest(BaseModel):
     message_id: str
     doctor_note: str
+    urgency: Optional[str] = "green"
 
 class ExpertAnswerRequest(BaseModel):
     expert_response: str
+
+class SearchRequest(BaseModel):
+    query: str
 
 @app.post("/api/chat")
 def chat_endpoint(req: QueryRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -416,10 +426,18 @@ def get_sessions(db: Session = Depends(get_db), current_user: User = Depends(get
         title = "Yeni Sohbet"
         if first_msg:
             title = first_msg.content[:35] + "..." if first_msg.content else "Görsel Vaka"
+            
+        # Check if there is any resolved expert review in this session
+        has_resolved_review = db.query(ExpertReview).join(Message).filter(
+            Message.session_id == s.id,
+            ExpertReview.is_resolved == True
+        ).first() is not None
+        
         result.append({
             "id": s.id,
             "title": title,
-            "created_at": s.created_at
+            "created_at": s.created_at,
+            "has_resolved_review": has_resolved_review
         })
     return result
 
@@ -443,6 +461,7 @@ def get_session_messages(session_id: str, db: Session = Depends(get_db), current
                 "id": m.expert_review.id,
                 "doctor_note": m.expert_review.doctor_note,
                 "expert_response": m.expert_review.expert_response,
+                "urgency": m.expert_review.urgency or "green",
                 "is_resolved": m.expert_review.is_resolved,
                 "created_at": m.expert_review.created_at.isoformat()
             }
@@ -483,17 +502,21 @@ def request_expert_review(req: ExpertReviewRequest, db: Session = Depends(get_db
     if not msg:
         raise HTTPException(status_code=404, detail="Mesaj bulunamadı.")
         
-    review = ExpertReview(message_id=req.message_id, doctor_note=req.doctor_note)
+    review = ExpertReview(
+        message_id=req.message_id, 
+        doctor_note=req.doctor_note,
+        urgency=req.urgency or "green"
+    )
     db.add(review)
     db.commit()
     return {"status": "success"}
 
 @app.get("/api/expert-reviews")
-def get_expert_reviews(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_expert_reviews(resolved: bool = False, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role != "expert":
         raise HTTPException(status_code=403, detail="Bu sayfaya sadece uzman hekimler erişebilir.")
         
-    reviews = db.query(ExpertReview).filter(ExpertReview.is_resolved == False).all()
+    reviews = db.query(ExpertReview).filter(ExpertReview.is_resolved == resolved).order_by(ExpertReview.created_at.desc()).all()
     result = []
     for r in reviews:
         msg = r.message
@@ -507,6 +530,9 @@ def get_expert_reviews(db: Session = Depends(get_db), current_user: User = Depen
         result.append({
             "id": r.id,
             "doctor_note": r.doctor_note,
+            "expert_response": r.expert_response,
+            "urgency": r.urgency or "green",
+            "is_resolved": r.is_resolved,
             "created_at": r.created_at,
             "history": history
         })
@@ -525,6 +551,31 @@ def answer_expert_review(review_id: int, req: ExpertAnswerRequest, db: Session =
     review.is_resolved = True
     db.commit()
     return {"status": "success"}
+
+@app.post("/api/knowledge/search")
+def search_knowledge(req: SearchRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Yetkisiz işlem. Sadece yöneticiler bilgi bankasında arama yapabilir.")
+        
+    global db_vector
+    if db_vector is None:
+        if os.path.exists(CHROMA_PATH):
+            db_vector = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+        else:
+            return []
+            
+    try:
+        docs_with_scores = db_vector.similarity_search_with_score(req.query, k=4)
+        results = []
+        for doc, score in docs_with_scores:
+            results.append({
+                "page_content": doc.page_content,
+                "metadata": doc.metadata,
+                "score": float(score)
+            })
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Arama hatası: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

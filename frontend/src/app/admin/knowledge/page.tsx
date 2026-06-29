@@ -18,6 +18,39 @@ export default function KnowledgeBasePage() {
   const [files, setFiles] = useState<KnowledgeFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    setIsSearching(true);
+    try {
+      const token = localStorage.getItem('token');
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
+      const res = await fetch(`${API_URL}/api/knowledge/search`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ query: searchQuery })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(data);
+      } else {
+        toast.error('Arama başarısız.');
+      }
+    } catch (error) {
+      toast.error('Bağlantı hatası.');
+    } finally {
+      setIsSearching(false);
+    }
+  };
 
   useEffect(() => {
     const role = localStorage.getItem('role');
@@ -206,6 +239,70 @@ export default function KnowledgeBasePage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Semantic Search Test Panel */}
+        <Card className="bg-zinc-900 border-zinc-800 w-full mt-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-zinc-100">
+              <Search className="text-blue-500" /> Semantik Arama ve Kaynak Test Paneli
+            </CardTitle>
+            <CardDescription className="text-zinc-400">
+              Vektör veritabanında semantik arama yaparak yüklenen kaynakların arama performansını ve yapay zekanın referans alacağı kaynak parçalarını test edin.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <form onSubmit={handleSearch} className="flex gap-2">
+              <Input
+                placeholder="Örnek: Apandisit tedavi algoritması nedir? veya Kafa travması..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                disabled={isSearching}
+                className="bg-zinc-950 border-zinc-800 text-zinc-100 placeholder:text-zinc-500 focus-visible:ring-blue-500/50"
+              />
+              <Button type="submit" disabled={isSearching || !searchQuery.trim()} className="bg-blue-600 hover:bg-blue-500 text-white shrink-0">
+                {isSearching ? 'Aranıyor...' : 'Ara'}
+              </Button>
+            </form>
+
+            {searchResults.length > 0 && (
+              <div className="space-y-4">
+                <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">Eşleşen Kaynak Parçaları (Semantik Sonuçlar)</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {searchResults.map((result, idx) => (
+                    <div key={idx} className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 flex flex-col justify-between space-y-3">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs border-b border-zinc-850 pb-2">
+                          <span className="text-blue-400 font-semibold truncate max-w-[200px]">
+                            📄 {result.metadata?.source ? result.metadata.source.split('/').pop() : 'Bilinmeyen Kaynak'}
+                          </span>
+                          <span className="text-zinc-500">
+                            Sayfa: {result.metadata?.page !== undefined ? result.metadata.page + 1 : 'N/A'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-zinc-300 leading-relaxed line-clamp-6 whitespace-pre-wrap select-text">
+                          "{result.page_content}"
+                        </p>
+                      </div>
+                      <div className="flex justify-between items-center text-[10px] pt-1 text-zinc-500">
+                        <span>Benzerlik Mesafesi (L2 Score)</span>
+                        <span className={`font-mono px-2 py-0.5 rounded ${
+                          result.score < 1.0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'
+                        }`}>
+                          {result.score.toFixed(4)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {searchResults.length === 0 && searchQuery && !isSearching && (
+              <div className="text-center py-6 text-zinc-500 text-sm italic">
+                Arama sonucunda eşleşen kayıt bulunamadı.
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
       <Toaster theme="dark" />
     </div>

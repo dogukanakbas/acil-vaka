@@ -57,6 +57,7 @@ class ExpertReview(Base):
     message_id = Column(String, ForeignKey('messages.id'), unique=True)
     doctor_note = Column(Text) # The note from the general practitioner
     expert_response = Column(Text, nullable=True) # Response from the expert
+    urgency = Column(String, default="green") # 'red', 'yellow', 'green'
     is_resolved = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     
