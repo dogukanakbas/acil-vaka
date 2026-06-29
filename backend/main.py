@@ -114,11 +114,16 @@ def on_startup():
     # Auto-migrate schema for image_path
     try:
         from sqlalchemy import text
-        db = next(get_db())
-        db.execute(text("ALTER TABLE messages ADD COLUMN image_path VARCHAR;"))
-        db.commit()
-    except Exception as e:
-        # Ignored if column already exists
+        from database import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("ALTER TABLE messages ADD COLUMN image_path VARCHAR;"))
+            db.commit()
+        except Exception:
+            pass
+        finally:
+            db.close()
+    except Exception:
         pass
     scheduler.start()
 
