@@ -2,18 +2,20 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, Bot, User, Stethoscope, ThumbsUp, ThumbsDown, HelpCircle, AlertTriangle, LogOut, MessageSquare, Plus, Menu, X } from 'lucide-react';
+import { Send, Bot, User, Stethoscope, ThumbsUp, ThumbsDown, HelpCircle, AlertTriangle, LogOut, MessageSquare, Plus, Menu, X, Paperclip, ImageIcon, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Toaster, toast } from 'sonner';
 
 type Message = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  image_url?: string | null;
   feedback?: 'positive' | 'negative' | null;
 };
 
@@ -26,7 +28,7 @@ type Session = {
 const WELCOME_MESSAGE: Message = {
   id: 'welcome',
   role: 'assistant',
-  content: 'Merhaba doktor bey/hanım. Ben Acil Vaka Asistanı. Bugünkü nöbetinizde size nasıl yardımcı olabilirim? Vakalarla ilgili danışmak istediğiniz belirtileri veya tahlil sonuçlarını yazabilirsiniz.',
+  content: 'Merhaba doktor bey/hanım. Ben Acil Vaka Asistanı. Bugünkü nöbetinizde size nasıl yardımcı olabilirim? Vakalarla ilgili danışmak istediğiniz belirtileri yazabilir veya analiz için röntgen/tahlil fotoğrafları yükleyebilirsiniz.',
 };
 
 export default function Home() {
@@ -39,8 +41,13 @@ export default function Home() {
   
   const [reviewMessageId, setReviewMessageId] = useState<string | null>(null);
   const [expertNote, setExpertNote] = useState('');
+  
+  const [visionModel, setVisionModel] = useState('gpt-4o');
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
   const fetchSessions = async () => {
@@ -117,12 +124,55 @@ export default function Home() {
     }
   }, [messages, isLoading]);
 
-  const handleSend = async () => {
-    if (!input.trim()) return;
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setSelectedImage(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
-    const userMessage = { id: Date.now().toString(), role: 'user' as const, content: input };
+  const removeImage = () => {
+    setSelectedImage(null);
+    setImagePreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = error => reject(error);
+    });
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() && !selectedImage) return;
+
+    let base64Image = null;
+    if (selectedImage) {
+      base64Image = await fileToBase64(selectedImage);
+    }
+
+    const userMessage: Message = { 
+      id: Date.now().toString(), 
+      role: 'user', 
+      content: input || 'Lütfen bu görseli inceleyin.',
+      image_url: imagePreview
+    };
+    
     setMessages((prev) => [...prev, userMessage]);
+    
+    const sentInput = input;
     setInput('');
+    removeImage();
     setIsLoading(true);
 
     try {
@@ -134,8 +184,10 @@ export default function Home() {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ 
-          message: userMessage.content,
-          session_id: sessionId
+          message: sentInput || 'Lütfen bu görseli inceleyin.',
+          session_id: sessionId,
+          image_base64: base64Image,
+          vision_model: visionModel
         }),
       });
 
@@ -147,7 +199,8 @@ export default function Home() {
           duration: 5000,
         });
         setMessages((prev) => prev.slice(0, -1));
-        setInput(userMessage.content);
+        setInput(sentInput);
+        if (base64Image) setImagePreview(base64Image);
         return;
       }
 
@@ -274,7 +327,20 @@ export default function Home() {
           )}
         </div>
 
-        <div className="p-4 border-t border-zinc-800">
+        <div className="p-4 border-t border-zinc-800 space-y-4">
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-1">Görüntü İşleme Yapay Zekası</label>
+            <Select value={visionModel} onValueChange={(val) => val && setVisionModel(val)}>
+              <SelectTrigger className="w-full bg-zinc-950 border-zinc-800 text-zinc-300">
+                <SelectValue placeholder="Model Seçin" />
+              </SelectTrigger>
+              <SelectContent className="bg-zinc-900 border-zinc-800 text-zinc-300">
+                <SelectItem value="gpt-4o">OpenAI GPT-4o</SelectItem>
+                <SelectItem value="gemini-1.5-pro">Google Gemini Pro</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          
           <Button 
             variant="ghost" 
             className="w-full justify-start text-zinc-400 hover:text-red-400 hover:bg-red-500/10 gap-2"
@@ -325,6 +391,11 @@ export default function Home() {
                           : 'bg-zinc-800 text-zinc-200 rounded-tl-sm'
                       }`}
                     >
+                      {m.image_url && (
+                        <div className="mb-3 rounded-lg overflow-hidden border border-zinc-700 max-w-sm">
+                          <img src={m.image_url} alt="Vaka Görseli" className="w-full object-cover" />
+                        </div>
+                      )}
                       {m.content}
                     </div>
                     {m.role === 'assistant' && m.id !== 'welcome' && (
@@ -369,24 +440,54 @@ export default function Home() {
           </div>
           
           <div className="p-4 bg-zinc-950 z-10 w-full max-w-4xl mx-auto">
+            {imagePreview && (
+              <div className="mb-3 inline-flex items-start relative group bg-zinc-900 border border-zinc-700 rounded-lg p-1.5 shadow-sm">
+                <img src={imagePreview} alt="Preview" className="h-20 w-20 object-cover rounded-md" />
+                <button 
+                  onClick={removeImage}
+                  className="absolute -top-2 -right-2 bg-zinc-800 text-zinc-300 hover:text-red-400 hover:bg-zinc-700 rounded-full p-0.5 shadow-md transition-colors"
+                >
+                  <XCircle size={20} />
+                </button>
+              </div>
+            )}
+            
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 handleSend();
               }}
-              className="flex gap-3"
+              className="flex gap-2 items-end"
             >
-              <Input
-                placeholder="Vaka bilgilerini veya semptomları yazın..."
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                disabled={isLoading}
-                className="flex-1 bg-zinc-900 border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus-visible:ring-emerald-500/50 h-12 rounded-xl text-base px-4"
-              />
+              <div className="relative flex-1">
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  ref={fileInputRef}
+                  onChange={handleImageSelect}
+                />
+                <Button 
+                  type="button"
+                  variant="ghost" 
+                  size="icon"
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg z-10"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Paperclip size={20} />
+                </Button>
+                <Input
+                  placeholder="Vaka bilgilerini yazın veya görsel ekleyin..."
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  disabled={isLoading}
+                  className="w-full bg-zinc-900 border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus-visible:ring-emerald-500/50 h-12 rounded-xl text-base pl-12 pr-4 shadow-inner"
+                />
+              </div>
               <Button 
                 type="submit" 
-                disabled={isLoading || !input.trim()}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white h-12 px-6 rounded-xl transition-all shadow-md"
+                disabled={isLoading || (!input.trim() && !selectedImage)}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white h-12 px-6 rounded-xl transition-all shadow-md shrink-0"
               >
                 <Send className="w-5 h-5" />
               </Button>

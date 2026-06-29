@@ -1,11 +1,13 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr
 import bcrypt
 from jose import JWTError, jwt
 import os
 import uuid
+import base64
 from typing import Optional, List
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -15,6 +17,9 @@ load_dotenv()
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
@@ -22,6 +27,8 @@ from langchain_core.output_parsers import StrOutputParser
 from sqlalchemy.orm import Session
 from database import init_db, get_db
 from models import ChatSession, Message, Feedback, ExpertReview, User
+
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = FastAPI(title="Acil Vaka Asistanı API")
 
@@ -32,6 +39,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+os.makedirs("uploads", exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Auth Configurations
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "b3c9d7f6e8a10f4c28b51d39e2a7b140")
@@ -75,6 +85,23 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     return user
 
+def cleanup_old_images():
+    try:
+        db = next(get_db())
+        now = datetime.utcnow()
+        seven_days_ago = now - timedelta(days=7)
+        old_messages = db.query(Message).filter(Message.image_path != None, Message.created_at < seven_days_ago).all()
+        for msg in old_messages:
+            if msg.image_path and os.path.exists(msg.image_path):
+                os.remove(msg.image_path)
+            msg.image_path = None
+        db.commit()
+    except Exception as e:
+        print("Cleanup error:", e)
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(cleanup_old_images, 'interval', days=1)
+
 CHROMA_PATH = "./chroma_db"
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
@@ -84,6 +111,7 @@ qa_chain = None
 @app.on_event("startup")
 def on_startup():
     init_db()
+    scheduler.start()
 
 def init_qa_chain():
     global db_vector, qa_chain
@@ -154,6 +182,8 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 class QueryRequest(BaseModel):
     session_id: Optional[str] = None
     message: str
+    image_base64: Optional[str] = None
+    vision_model: str = "gpt-4o"
 
 class FeedbackRequest(BaseModel):
     message_id: str
@@ -170,15 +200,9 @@ class ExpertAnswerRequest(BaseModel):
 def chat_endpoint(req: QueryRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     global qa_chain
     
-    if not os.path.exists(CHROMA_PATH):
+    if not os.path.exists(CHROMA_PATH) and not req.image_base64:
         raise HTTPException(status_code=500, detail="Veritabanı (Vektör DB) henüz hazır değil.")
         
-    if not os.environ.get("GROQ_API_KEY"):
-        raise HTTPException(status_code=500, detail="Groq API anahtarı eksik.")
-        
-    if qa_chain is None:
-        init_qa_chain()
-
     # Session Management
     session_id = req.session_id
     if not session_id:
@@ -187,7 +211,7 @@ def chat_endpoint(req: QueryRequest, db: Session = Depends(get_db), current_user
         db.add(new_session)
         db.commit()
     else:
-        # Check mandatory feedback (every 5 interactions)
+        # Check mandatory feedback
         ai_messages = db.query(Message).filter(
             Message.session_id == session_id,
             Message.role == 'assistant'
@@ -201,14 +225,53 @@ def chat_endpoint(req: QueryRequest, db: Session = Depends(get_db), current_user
                     detail="Sistemi kullanmaya devam etmek için lütfen önceki yanıtlara geri bildirim (👍/👎) verin."
                 )
 
+    image_path = None
+    if req.image_base64:
+        if req.vision_model == "gpt-4o" and not os.environ.get("OPENAI_API_KEY"):
+            raise HTTPException(status_code=500, detail="OpenAI API anahtarı ayarlanmamış.")
+        if req.vision_model == "gemini-1.5-pro" and not os.environ.get("GOOGLE_API_KEY"):
+            raise HTTPException(status_code=500, detail="Google API anahtarı ayarlanmamış.")
+            
+        try:
+            # Parse and save image
+            b64_data = req.image_base64
+            if "," in b64_data:
+                b64_data = b64_data.split(",")[1]
+            image_data = base64.b64decode(b64_data)
+            filename = f"{uuid.uuid4()}.jpg"
+            filepath = os.path.join("uploads", filename)
+            with open(filepath, "wb") as f:
+                f.write(image_data)
+            image_path = f"/uploads/{filename}"
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="Geçersiz görsel formatı.")
+
     # Save User Message
-    user_msg = Message(id=str(uuid.uuid4()), session_id=session_id, role="user", content=req.message)
+    user_msg = Message(id=str(uuid.uuid4()), session_id=session_id, role="user", content=req.message, image_path=image_path)
     db.add(user_msg)
     db.commit()
         
     try:
         # Generate AI Answer
-        result = qa_chain.invoke(req.message)
+        if req.image_base64:
+            content = [
+                {"type": "text", "text": f"Lütfen bu tıbbi görseli profesyonel bir hekim gibi incele. Hastanın sorduğu soru: {req.message}"},
+                {"type": "image_url", "image_url": {"url": req.image_base64 if req.image_base64.startswith("data:image") else f"data:image/jpeg;base64,{req.image_base64}"}}
+            ]
+            
+            if req.vision_model == "gpt-4o":
+                vision_llm = ChatOpenAI(model="gpt-4o", max_tokens=1024)
+            else:
+                vision_llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", max_tokens=1024)
+                
+            vision_result = vision_llm.invoke([HumanMessage(content=content)])
+            result = vision_result.content
+        else:
+            if not os.environ.get("GROQ_API_KEY"):
+                raise HTTPException(status_code=500, detail="Groq API anahtarı eksik.")
+            if qa_chain is None:
+                init_qa_chain()
+            result = qa_chain.invoke(req.message)
         
         # Save AI Message
         ai_msg_id = str(uuid.uuid4())
@@ -230,7 +293,9 @@ def get_sessions(db: Session = Depends(get_db), current_user: User = Depends(get
     result = []
     for s in sessions:
         first_msg = db.query(Message).filter(Message.session_id == s.id, Message.role == "user").order_by(Message.created_at.asc()).first()
-        title = first_msg.content[:35] + "..." if first_msg and first_msg.content else "Yeni Sohbet"
+        title = "Yeni Sohbet"
+        if first_msg:
+            title = first_msg.content[:35] + "..." if first_msg.content else "Görsel Vaka"
         result.append({
             "id": s.id,
             "title": title,
@@ -255,6 +320,7 @@ def get_session_messages(session_id: str, db: Session = Depends(get_db), current
             "id": m.id,
             "role": m.role,
             "content": m.content,
+            "image_url": f"http://147.93.57.202:8000{m.image_path}" if m.image_path else None,
             "feedback": fb
         })
     return result
@@ -265,7 +331,6 @@ def submit_feedback(req: FeedbackRequest, db: Session = Depends(get_db), current
     if not msg:
         raise HTTPException(status_code=404, detail="Mesaj bulunamadı.")
         
-    # Verify the message belongs to the current user's session
     session = db.query(ChatSession).filter(ChatSession.id == msg.session_id).first()
     if not session or session.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Erişim reddedildi.")
@@ -299,14 +364,13 @@ def get_expert_reviews(db: Session = Depends(get_db), current_user: User = Depen
     reviews = db.query(ExpertReview).filter(ExpertReview.is_resolved == False).all()
     result = []
     for r in reviews:
-        # Include context for the expert
         msg = r.message
         context_msgs = db.query(Message).filter(
             Message.session_id == msg.session_id,
             Message.created_at <= msg.created_at
         ).order_by(Message.created_at.asc()).all()
         
-        history = [{"role": m.role, "content": m.content} for m in context_msgs]
+        history = [{"role": m.role, "content": m.content, "image_url": f"http://147.93.57.202:8000{m.image_path}" if m.image_path else None} for m in context_msgs]
         
         result.append({
             "id": r.id,
