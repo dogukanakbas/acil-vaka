@@ -271,7 +271,7 @@ def chat_endpoint(req: QueryRequest, db: Session = Depends(get_db), current_user
             if req.vision_model == "gpt-4o":
                 vision_llm = ChatOpenAI(model="gpt-4o", max_tokens=1024)
             else:
-                vision_llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", max_tokens=1024)
+                vision_llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest", max_tokens=1024)
                 
             vision_result = vision_llm.invoke([HumanMessage(content=content)])
             result = vision_result.content
@@ -294,7 +294,12 @@ def chat_endpoint(req: QueryRequest, db: Session = Depends(get_db), current_user
             "response": result
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        if "429" in error_msg or "quota" in error_msg.lower():
+            raise HTTPException(status_code=400, detail="Seçtiğiniz yapay zeka modelinin (OpenAI/Gemini) kotası veya bakiyesi yetersiz. Lütfen faturalandırma ayarlarınızı kontrol edin veya diğer modele geçin.")
+        elif "404" in error_msg or "not found" in error_msg.lower():
+            raise HTTPException(status_code=400, detail="Seçilen yapay zeka modeli bulunamadı veya bu API anahtarı için aktif değil.")
+        raise HTTPException(status_code=500, detail=f"Yapay Zeka Hatası: {error_msg}")
 
 @app.get("/api/chat/sessions")
 def get_sessions(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
