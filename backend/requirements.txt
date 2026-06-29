@@ -19,3 +19,4 @@ email-validator
 python-multipart
 apscheduler
 numpy<2.0.0
+pypdf
