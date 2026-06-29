@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
@@ -322,8 +322,43 @@ def chat_endpoint(req: QueryRequest, db: Session = Depends(get_db), current_user
 
 DATA_DIR = "./data"
 
+def process_pdf_background(file_path: str):
+    try:
+        from langchain_community.document_loaders import PyPDFLoader
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        
+        loader = PyPDFLoader(file_path)
+        documents = loader.load()
+        
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200, length_function=len)
+        chunks = text_splitter.split_documents(documents)
+        
+        global db_vector
+        if db_vector is None:
+            if os.path.exists(CHROMA_PATH):
+                db_vector = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+            else:
+                db_vector = Chroma.from_documents(chunks, embeddings, persist_directory=CHROMA_PATH)
+                db_vector.persist()
+                init_qa_chain()
+                return
+        
+        # OOM veya Chroma limitine takılmamak için batch (parça parça) ekleme yapıyoruz
+        batch_size = 5000
+        for i in range(0, len(chunks), batch_size):
+            db_vector.add_documents(chunks[i:i+batch_size])
+            
+        db_vector.persist()
+        
+        # Re-init QA chain to ensure it uses the latest retriever
+        init_qa_chain()
+        print(f"Background PDF processing completed for: {file_path}")
+        
+    except Exception as e:
+        print(f"Background PDF processing error: {str(e)}")
+
 @app.post("/api/knowledge/upload")
-async def upload_knowledge(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
+async def upload_knowledge(background_tasks: BackgroundTasks, file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Yetkisiz işlem. Sadece yöneticiler bilgi bankasına veri ekleyebilir.")
         
@@ -335,38 +370,11 @@ async def upload_knowledge(file: UploadFile = File(...), current_user: User = De
         content = await file.read()
         f.write(content)
         
-    # Process PDF and add to vector db
+    # Process PDF in background so HTTP request doesn't timeout for large books
     if file.filename.endswith(".pdf"):
-        try:
-            from langchain_community.document_loaders import PyPDFLoader
-            from langchain_text_splitters import RecursiveCharacterTextSplitter
+        background_tasks.add_task(process_pdf_background, file_path)
             
-            loader = PyPDFLoader(file_path)
-            documents = loader.load()
-            
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200, length_function=len)
-            chunks = text_splitter.split_documents(documents)
-            
-            global db_vector
-            if db_vector is None:
-                if os.path.exists(CHROMA_PATH):
-                    db_vector = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
-                else:
-                    db_vector = Chroma.from_documents(chunks, embeddings, persist_directory=CHROMA_PATH)
-                    db_vector.persist()
-                    init_qa_chain()
-                    return {"message": f"{file.filename} başarıyla yüklendi ve veritabanı oluşturuldu."}
-            
-            db_vector.add_documents(chunks)
-            db_vector.persist()
-            
-            # Re-init QA chain to ensure it uses the latest retriever
-            init_qa_chain()
-            
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"PDF işlenirken hata oluştu: {str(e)}")
-            
-    return {"message": f"{file.filename} başarıyla yüklendi ve yapay zeka hafızasına eklendi."}
+    return {"message": f"{file.filename} başarıyla sunucuya yüklendi. Arka planda okuma/öğrenme işlemi devam ediyor. (Kitap boyutuna göre birkaç dakika sürebilir)."}
 
 @app.get("/api/knowledge/files")
 def list_knowledge_files(current_user: User = Depends(get_current_user)):
