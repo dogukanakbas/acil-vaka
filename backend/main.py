@@ -111,6 +111,15 @@ qa_chain = None
 @app.on_event("startup")
 def on_startup():
     init_db()
+    # Auto-migrate schema for image_path
+    try:
+        from sqlalchemy import text
+        db = next(get_db())
+        db.execute(text("ALTER TABLE messages ADD COLUMN image_path VARCHAR;"))
+        db.commit()
+    except Exception as e:
+        # Ignored if column already exists
+        pass
     scheduler.start()
 
 def init_qa_chain():
