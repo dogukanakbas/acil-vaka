@@ -376,9 +376,12 @@ async def upload_knowledge(background_tasks: BackgroundTasks, file: UploadFile =
         os.makedirs(DATA_DIR)
         
     file_path = os.path.join(DATA_DIR, file.filename)
-    with open(file_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
+    try:
+        with open(file_path, "wb") as f:
+            while chunk := await file.read(1024 * 1024 * 5): # 5MB chunks
+                f.write(chunk)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Dosya kaydedilirken hata oluştu: {str(e)}")
         
     # Process PDF in background so HTTP request doesn't timeout for large books
     if file.filename.endswith(".pdf"):
