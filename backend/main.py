@@ -135,18 +135,17 @@ def init_qa_chain():
         
         llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.2)
         
-        template = """Sen uzman bir Acil Tıp Danışmanısın. Karşındaki kişi bir hasta değil, acil serviste nöbet tutan bir hekim/pratisyen hekimdir. 
-Sana danışılan vakaları değerlendirirken asla "acile gidin", "doktora görünün" gibi hasta yönlendirmeleri YAPMA, çünkü karşındaki zaten bir doktordur.
-Bunun yerine doğrudan ayırıcı tanılar, istenmesi gereken tetkikler, tedavi algoritmaları ve hastaya acilde yapılması gereken müdahaleler hakkında profesyonel meslektaşına konsültasyon ver.
+        from langchain_core.prompts import ChatPromptTemplate
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """Sen kıdemli bir Acil Tıp Uzmanı ve Konsültan Hekimsin. Karşındaki kişi bir hasta değil, acil serviste nöbet tutan ve sana danışan bir hekim/pratisyen hekimdir.
+Asla "acile gidin", "doktora görünün" gibi hasta yönlendirmeleri YAPMA!
+Sana verilen VAKA BİLGİLERİ (Bağlam) üzerinden doğrudan ayırıcı tanılar, istenmesi gereken tetkikler, acil servis tedavi algoritmaları ve meslektaşına öneriler sun. Asla bağlamdaki metni olduğu gibi kopyalayıp cevap olarak verme, onu analiz et.
 
-Bağlamdaki tıbbi bilgileri (varsa) referans al. Cevap bağlamda yoksa kendi medikal bilgini kullanarak en güncel acil servis protokollerine göre meslektaşına önerilerde bulun.
-
-Bağlam: {context}
-
-Hekimin Danıştığı Vaka/Soru: {question}
-
-Konsültasyon Yanıtı:"""
-        prompt = PromptTemplate.from_template(template)
+TIBBİ BAĞLAM / BİLGİ BANKASI:
+{context}"""),
+            ("human", "Meslektaşımın Danıştığı Soru/Vaka: {question}")
+        ])
         
         def format_docs(docs):
             return "\n\n".join(doc.page_content for doc in docs)
@@ -271,17 +270,27 @@ def chat_endpoint(req: QueryRequest, db: Session = Depends(get_db), current_user
     try:
         # Generate AI Answer
         if req.image_base64:
+            from langchain_core.messages import SystemMessage, HumanMessage
             content = [
-                {"type": "text", "text": f"Sen uzman bir Acil Tıp Danışmanısın. Karşındaki kişi acil serviste nöbet tutan bir hekim meslektaşındır. Asla 'doktora başvurun' veya 'acile gidin' deme. Lütfen bu tıbbi görseli ve klinik bilgiyi değerlendirerek meslektaşına ayırıcı tanılar, ileri tetkikler ve acil servis tedavi adımları açısından profesyonel bir konsültasyon ver.\n\nHekimin Notu/Sorusu: {req.message}"},
+                {"type": "text", "text": f"Lütfen bu tıbbi görseli ve klinik bilgiyi değerlendirerek meslektaşına ayırıcı tanılar, ileri tetkikler ve tedavi adımları açısından konsültasyon ver.\n\nHekimin Notu: {req.message}"},
                 {"type": "image_url", "image_url": {"url": req.image_base64 if req.image_base64.startswith("data:image") else f"data:image/jpeg;base64,{req.image_base64}"}}
             ]
             
+            if req.vision_model == "gpt-4o" and not os.environ.get("OPENAI_API_KEY"):
+                raise HTTPException(status_code=500, detail="OpenAI API anahtarı ayarlanmamış.")
+            if req.vision_model != "gpt-4o" and not os.environ.get("GOOGLE_API_KEY"):
+                raise HTTPException(status_code=500, detail="Google Gemini API anahtarı ayarlanmamış.")
+                
             if req.vision_model == "gpt-4o":
                 vision_llm = ChatOpenAI(model="gpt-4o", max_tokens=1024)
             else:
                 vision_llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest", max_tokens=1024)
                 
-            vision_result = vision_llm.invoke([HumanMessage(content=content)])
+            messages = [
+                SystemMessage(content="Sen kıdemli bir Acil Tıp Uzmanı ve Konsültan Hekimsin. Karşındaki kişi acil serviste nöbet tutan bir hekim meslektaşındır. Asla 'doktora başvurun' veya 'acile gidin' deme, o zaten bir doktor. Doğrudan profesyonel tıbbi konsültasyon ver."),
+                HumanMessage(content=content)
+            ]
+            vision_result = vision_llm.invoke(messages)
             result = vision_result.content
         else:
             if not os.environ.get("GROQ_API_KEY"):
