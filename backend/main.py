@@ -436,12 +436,24 @@ def get_session_messages(session_id: str, db: Session = Depends(get_db), current
         fb = None
         if m.feedback:
             fb = "positive" if m.feedback.is_positive else "negative"
+            
+        review_data = None
+        if m.expert_review:
+            review_data = {
+                "id": m.expert_review.id,
+                "doctor_note": m.expert_review.doctor_note,
+                "expert_response": m.expert_review.expert_response,
+                "is_resolved": m.expert_review.is_resolved,
+                "created_at": m.expert_review.created_at.isoformat()
+            }
+            
         result.append({
             "id": m.id,
             "role": m.role,
             "content": m.content,
             "image_url": f"http://147.93.57.202:8000{m.image_path}" if m.image_path else None,
-            "feedback": fb
+            "feedback": fb,
+            "expert_review": review_data
         })
     return result
 

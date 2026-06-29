@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, Bot, User, Stethoscope, ThumbsUp, ThumbsDown, HelpCircle, AlertTriangle, LogOut, MessageSquare, Plus, Menu, X, Paperclip, ImageIcon, XCircle, Database } from 'lucide-react';
+import { Send, Bot, User, Stethoscope, ThumbsUp, ThumbsDown, HelpCircle, AlertTriangle, LogOut, MessageSquare, Plus, Menu, X, Paperclip, ImageIcon, XCircle, Database, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -11,12 +11,21 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Toaster, toast } from 'sonner';
 
+type ExpertReview = {
+  id: number;
+  doctor_note: string;
+  expert_response: string | null;
+  is_resolved: boolean;
+  created_at: string;
+};
+
 type Message = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   image_url?: string | null;
   feedback?: 'positive' | 'negative' | null;
+  expert_review?: ExpertReview | null;
 };
 
 type Session = {
@@ -267,6 +276,19 @@ export default function Home() {
       });
       if (res.ok) {
         toast.success('Talep Gönderildi', { description: 'Vakanız ilgili uzman hekim paneline düşmüştür.' });
+        
+        // Update local state to immediately show the pending review
+        setMessages(prev => prev.map(m => m.id === reviewMessageId ? {
+          ...m,
+          expert_review: {
+            id: 0,
+            doctor_note: expertNote,
+            expert_response: null,
+            is_resolved: false,
+            created_at: new Date().toISOString()
+          }
+        } : m));
+
         setReviewMessageId(null);
         setExpertNote('');
       } else {
@@ -423,14 +445,51 @@ export default function Home() {
                         >
                           <ThumbsDown size={16} />
                         </button>
-                        <button 
-                          onClick={() => setReviewMessageId(m.id)}
-                          className="ml-2 flex items-center gap-1.5 text-xs font-medium text-amber-500/80 hover:text-amber-400 hover:bg-amber-500/10 px-2.5 py-1.5 rounded-md transition-colors"
-                        >
-                          <HelpCircle size={14} />
-                          <span>Uzmana Sor</span>
-                        </button>
+                        {!m.expert_review && (
+                          <button 
+                            onClick={() => setReviewMessageId(m.id)}
+                            className="ml-2 flex items-center gap-1.5 text-xs font-medium text-amber-500/80 hover:text-amber-400 hover:bg-amber-500/10 px-2.5 py-1.5 rounded-md transition-colors"
+                          >
+                            <HelpCircle size={14} />
+                            <span>Uzmana Sor</span>
+                          </button>
+                        )}
                       </div>
+                    )}
+                    {m.expert_review && (
+                      m.expert_review.is_resolved ? (
+                        <div className="w-full mt-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
+                          <div className="flex items-center justify-between border-b border-emerald-500/20 pb-2">
+                            <div className="flex items-center gap-2 text-emerald-400 text-sm font-bold">
+                              <Stethoscope size={16} />
+                              <span>Uzman Hekim Değerlendirmesi</span>
+                            </div>
+                            <span className="text-[10px] text-zinc-500">
+                              {new Date(m.expert_review.created_at).toLocaleDateString('tr-TR')}
+                            </span>
+                          </div>
+                          <div className="space-y-2">
+                            <p className="text-xs text-zinc-400 italic">
+                              <span className="font-semibold text-zinc-300 not-italic">Sizin Notunuz: </span>
+                              "{m.expert_review.doctor_note}"
+                            </p>
+                            <div className="bg-zinc-900/80 border border-zinc-800 rounded-lg p-3 text-sm text-zinc-200 whitespace-pre-wrap">
+                              {m.expert_review.expert_response}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="w-full mt-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 space-y-2">
+                          <div className="flex items-center gap-2 text-amber-500 text-sm font-semibold">
+                            <Clock size={16} className="animate-pulse" />
+                            <span>Uzman İncelemesi Bekleniyor</span>
+                          </div>
+                          <p className="text-xs text-zinc-400 italic">
+                            <span className="font-semibold text-zinc-300 not-italic">İletilen Hekim Notu: </span>
+                            "{m.expert_review.doctor_note}"
+                          </p>
+                        </div>
+                      )
                     )}
                   </div>
                 </div>
