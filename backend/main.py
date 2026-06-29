@@ -130,14 +130,17 @@ def init_qa_chain():
         
         llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.2)
         
-        template = """Aşağıdaki medikal soruyu veya vakayı bir doktor gibi profesyonelce Türkçe olarak yanıtla. 
-Bağlamdaki tıbbi bilgileri kullan. Eğer cevap bağlamda yoksa kendi medikal bilgini kullanarak en iyi öneriyi yap, ancak uydurma yapma.
+        template = """Sen uzman bir Acil Tıp Danışmanısın. Karşındaki kişi bir hasta değil, acil serviste nöbet tutan bir hekim/pratisyen hekimdir. 
+Sana danışılan vakaları değerlendirirken asla "acile gidin", "doktora görünün" gibi hasta yönlendirmeleri YAPMA, çünkü karşındaki zaten bir doktordur.
+Bunun yerine doğrudan ayırıcı tanılar, istenmesi gereken tetkikler, tedavi algoritmaları ve hastaya acilde yapılması gereken müdahaleler hakkında profesyonel meslektaşına konsültasyon ver.
+
+Bağlamdaki tıbbi bilgileri (varsa) referans al. Cevap bağlamda yoksa kendi medikal bilgini kullanarak en güncel acil servis protokollerine göre meslektaşına önerilerde bulun.
 
 Bağlam: {context}
 
-Soru: {question}
+Hekimin Danıştığı Vaka/Soru: {question}
 
-Yanıt:"""
+Konsültasyon Yanıtı:"""
         prompt = PromptTemplate.from_template(template)
         
         def format_docs(docs):
@@ -264,7 +267,7 @@ def chat_endpoint(req: QueryRequest, db: Session = Depends(get_db), current_user
         # Generate AI Answer
         if req.image_base64:
             content = [
-                {"type": "text", "text": f"Lütfen bu tıbbi görseli profesyonel bir hekim gibi incele. Hastanın sorduğu soru: {req.message}"},
+                {"type": "text", "text": f"Sen uzman bir Acil Tıp Danışmanısın. Karşındaki kişi acil serviste nöbet tutan bir hekim meslektaşındır. Asla 'doktora başvurun' veya 'acile gidin' deme. Lütfen bu tıbbi görseli ve klinik bilgiyi değerlendirerek meslektaşına ayırıcı tanılar, ileri tetkikler ve acil servis tedavi adımları açısından profesyonel bir konsültasyon ver.\n\nHekimin Notu/Sorusu: {req.message}"},
                 {"type": "image_url", "image_url": {"url": req.image_base64 if req.image_base64.startswith("data:image") else f"data:image/jpeg;base64,{req.image_base64}"}}
             ]
             
